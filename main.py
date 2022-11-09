@@ -2,6 +2,8 @@ import string
 import urllib.parse as URL
 from bs4 import BeautifulSoup
 import requests
+import sqlite3 as sq
+from pathlib import Path
 
 
 def get_page(url: str) -> requests.Response:
@@ -80,6 +82,59 @@ def sort_words(word_count: dict):
     return {k: v for k, v in sorted(l, key=lambda item: item[1], reverse=True)}
 
 
+def init_db(cur: sq.Cursor):
+    cur.executescript("""
+BEGIN TRANSACTION;
+
+CREATE TABLE IF NOT EXISTS "words" (
+    "id_word"   INTEGER PRIMARY KEY AUTOINCREMENT,
+    "word"      TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS "pages" (
+    "id_page"   INTEGER PRIMARY KEY AUTOINCREMENT,
+    "url"       TEXT NOT NULL,
+    "marker"    NOT NULL DEFAULT 1
+);
+
+CREATE TABLE IF NOT EXISTS "sentences" (
+    "id_sent"   INTEGER PRIMARY KEY AUTOINCREMENT,
+    "sent"      TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS "sent_in_page" (
+    "id_page"   INTEGER NOT NULL,
+    "id_sent"   INTEGER NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS "words_in_page" (
+    "id_page"   INTEGER NOT NULL,
+    "id_word"   INTEGER NOT NULL,
+    "count"     INTEGER NOT NULL DEFAULT 1
+);
+
+CREATE TABLE IF NOT EXISTS "words_in_sent" (
+    "id_sent"   INTEGER NOT NULL,
+    "id_word"   INTEGER NOT NULL
+);
+
+COMMIT;
+
+    """)
+
+
+def add_page(cur: sq.Cursor, url: str):
+    pass
+
+
+def add_word_in_db(cur: sq.Cursor, id_page, page_words: dict):
+    pass
+
+
+def add_sentences(cur: sq.Cursor, id_page, sentences: list[str]):
+    pass
+
+
 if __name__ == '__main__':
     url = 'https://docs.python.org/3.11/reference/index.html?d=45#24'
 
@@ -88,10 +143,14 @@ if __name__ == '__main__':
     text = get_page(url).text
     soup = BeautifulSoup(text, 'lxml')
 
+    sentences = soup.get_text().splitlines()
+    # print(l)
+    # print(len(l))
+    # exit()
     l = soup.get_text().split()
 
-    print(l)
-    print(len(l))
+    # print(l)
+    # print(len(l))
 
     page_words = {}
     for txt in l:
@@ -99,6 +158,17 @@ if __name__ == '__main__':
 
     page_words = sort_words(page_words)
 
-    print(page_words)
+    # print(page_words)
+    # print(len(page_words))
+    # print(path, page_name, file_name, ext, sep="\n")
 
-    print(path, page_name, file_name, ext, sep="\n")
+    path_db = Path(__file__).parent/'words.db'
+    # print(path_db)
+    # print(__file__)
+    with sq.connect(path_db) as con:
+        cur = con.cursor()
+        init_db(cur)
+
+        id_page = add_page(cur, t_url)
+        add_word_in_db(cur, id_page, page_words)
+        add_sentences(cur, id_page, sentences)
