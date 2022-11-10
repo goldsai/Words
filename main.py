@@ -98,6 +98,7 @@ CREATE TABLE IF NOT EXISTS "words" (
     "id_word"   INTEGER PRIMARY KEY AUTOINCREMENT,
     "word"      TEXT NOT NULL
 );
+CREATE INDEX IF NOT EXISTS ind_words ON words (word);
 
 CREATE TABLE IF NOT EXISTS "pages" (
     "id_page"   INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -120,11 +121,13 @@ CREATE TABLE IF NOT EXISTS "words_in_page" (
     "id_word"   INTEGER NOT NULL,
     "count"     INTEGER NOT NULL DEFAULT 1
 );
+CREATE INDEX IF NOT EXISTS ind_words_in_page ON words_in_page (id_page, id_word);
 
 CREATE TABLE IF NOT EXISTS "words_in_sent" (
     "id_sent"   INTEGER NOT NULL,
     "id_word"   INTEGER NOT NULL
 );
+CREATE INDEX IF NOT EXISTS ind_words_in_sent ON words_in_sent (id_sent, id_word);
 
 COMMIT;
 
@@ -168,11 +171,11 @@ def add_page(cur: sq.Cursor, url: str):
     rez = cur.fetchone()
     if rez:
 
-        return rez[0]
+        return True, rez[0]
     else:
         cur.execute("INSERT INTO pages (url) VALUES (?)", (url,))
 
-        return cur.lastrowid
+        return False, cur.lastrowid
 
 
 def get_id_word(cur: sq.Cursor, word: str):
@@ -286,12 +289,14 @@ def add_new_urls(url: str, soup: BeautifulSoup = None, list_urls: list[str] = No
 
 if __name__ == '__main__':
     # list_url
+    # Общее время: 2:23:45.436385 - 267 страниц
     list_url = ['https://docs.python.org/3.11/reference/index.html']
     global_time = datetime.now()
     count_url = 0
     error_url = []
     max_loop_time = None
     min_loop_time = None
+    m_one = True
     while count_url < len(list_url):
         time_loop = datetime.now()
         url = list_url[count_url]
@@ -314,25 +319,28 @@ if __name__ == '__main__':
 
             path_db = Path(__file__).parent/'words.db'
 
+            print(
+                f'\t\tОбработал {len(page_words)} слов; {len(sentences)} предложения за {datetime.now()-time_loop}')
         except Exception as e:
 
             print('-'*50)
             print(f'При обработке ссылки "{url}" произошло исключение {e}')
             print('-'*50)
-            error_url.append(url)
+            error_url.append({'url': url, 'err': e})
         else:
             time_db = datetime.now()
             with sq.connect(path_db) as con:
                 cur = con.cursor()
-                init_db(cur)
+                if m_one:
+                    init_db(cur)
+                    m_one = False
 
-                id_page = add_page(cur, t_url)
-                add_word_in_db(cur, id_page, page_words)
-                add_sentences(cur, id_page, sentences, page_words)
+                in_db, id_page = add_page(cur, t_url)
+                if not in_db:
+                    add_word_in_db(cur, id_page, page_words)
+                    add_sentences(cur, id_page, sentences, page_words)
             print(
                 f'\t\tРабота с БД за:{datetime.now()-time_db}')
-            print(
-                f'\t\tОбработал {len(page_words)} слов; {len(sentences)} предложения')
             # print(f'\t\tОбработал {len(page_words)} слов')
         _time_loop = datetime.now()-time_loop
         if not min_loop_time:
@@ -343,10 +351,10 @@ if __name__ == '__main__':
         if min_loop_time > _time_loop:
             min_loop_time = _time_loop
         print(
-            f'\t\tОбработал за:{_time_loop} из них обрабатывал страницу за {time_db-time_loop} ({min_loop_time}:{max_loop_time})\n')
+            f'\t\tОбработал за:{_time_loop} ({min_loop_time}:{max_loop_time})\n')
     print(
         f'\nОбщее время: {datetime.now()-global_time} \n\tВсего обработал: {count_url} ссылок')
 
     print(f'Необработанно {len(error_url)} ссылок:')
     for num, url in enumerate(error_url):
-        print(f'{num}\t - url')
+        print(f'{num}\t - {url}')
