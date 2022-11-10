@@ -61,13 +61,20 @@ def parse_url(url: str):
     return('', '', '', '', '', '')
 
 
+def get_words(words: list[str]) -> dict:
+    count_words = {}
+    for txt in words:
+        add_word(txt, count_words)
+    return count_words
+
+
 def add_word(word: str, dict_words) -> None:
     norm_word = _normalization_word(word)
     if norm_word is not None:
         if norm_word in dict_words:
-            dict_words[norm_word] += 1
+            dict_words[norm_word]['count'] += 1
         else:
-            dict_words[norm_word] = 1
+            dict_words[norm_word] = {'count': 1}
     # print(norm_word)
 
 
@@ -79,7 +86,7 @@ def _normalization_word(word: str) -> str:
 
 def sort_words(word_count: dict):
     l = sorted(word_count.items())
-    return {k: v for k, v in sorted(l, key=lambda item: item[1], reverse=True)}
+    return {k: v for k, v in sorted(l, key=lambda item: item[1]['Count'], reverse=True)}
 
 
 def init_db(cur: sq.Cursor):
@@ -94,7 +101,7 @@ CREATE TABLE IF NOT EXISTS "words" (
 CREATE TABLE IF NOT EXISTS "pages" (
     "id_page"   INTEGER PRIMARY KEY AUTOINCREMENT,
     "url"       TEXT NOT NULL,
-    "marker"    NOT NULL DEFAULT 1
+    "marker"    NOT NULL DEFAULT 0
 );
 
 CREATE TABLE IF NOT EXISTS "sentences" (
@@ -123,52 +130,182 @@ COMMIT;
     """)
 
 
+def _get_sets_words(line: str) -> set:
+    rez = set()
+    for item in line.split():
+        word = _normalization_word(item)
+        if word:
+            rez.add(word)
+    return rez
+
+
+def _normalization_sentences(line: str):
+    line = line.strip()
+
+    return {'line': line, 'words': _get_sets_words(line)} if line else None
+
+
+def get_sentences(soap: BeautifulSoup) -> list[dict]:
+    l = []
+    for line in soup.get_text().splitlines():
+        if item := _normalization_sentences(line):
+            l.append(item)
+    return l
+
+
+# def parser_sql_url(url) -> str:
+#     check_list = [
+#         ';',
+#         'SELECT',
+#         ''
+#     ]
+
+
 def add_page(cur: sq.Cursor, url: str):
-    pass
+    # cur.execute("SELECT id_page FROM pages WHERE url LIKE '?'", (url,))
+    cur.execute("SELECT id_page FROM pages WHERE url LIKE ?", (url,))
+    rez = cur.fetchone()
+    if rez:
+
+        return rez[0]
+    else:
+        cur.execute("INSERT INTO pages (url) VALUES (?)", (url,))
+
+        return cur.lastrowid
+
+
+def get_id_word(cur: sq.Cursor, word: str):
+    cur.execute("SELECT id_word FROM words WHERE word LIKE ?", (word,))
+    rez = cur.fetchone()
+    if rez:
+
+        return rez[0]
+    else:
+        cur.execute("INSERT INTO words (word) VALUES (?)", (word,))
+
+        return cur.lastrowid
 
 
 def add_word_in_db(cur: sq.Cursor, id_page, page_words: dict):
-    pass
+    for word, item in page_words.items():
+        id_word = get_id_word(cur, word)
+        count = item['count']
+        cur.execute(
+            "SELECT 'count', rowid FROM words_in_page WHERE id_page = ? AND id_word = ?", (id_page, id_word))
+        rez = cur.fetchone()
+        if rez:
+            item['id'] = cur.lastrowid
+            if rez[0] != count:
+                cur.execute(
+                    "UPDATE words_in_page SET 'count' = ? WHERE rowid = ?", (count, rez[1]))
+
+        else:
+            cur.execute(
+                "INSERT INTO words_in_page (id_page, id_word, 'count') VALUES (?, ?, ?)", (id_page, id_word, count))
+            item['id'] = cur.lastrowid
 
 
-def add_sentences(cur: sq.Cursor, id_page, sentences: list[str]):
-    pass
+def get_id_sentences(cur: sq.Cursor, sent: str):
+
+    cur.execute("SELECT id_sent FROM sentences WHERE sent LIKE ?", (sent,))
+    rez = cur.fetchone()
+    if rez:
+
+        return True, rez[0]
+    else:
+        cur.execute("INSERT INTO sentences (sent) VALUES (?)", (sent,))
+
+        return False, cur.lastrowid
+
+
+def add_to_db_sent(cur: sq.Cursor, id_page, id_sent):
+    # sent_in_page
+    cur.execute(
+        "SELECT rowid FROM sent_in_page WHERE id_page = ? AND id_sent = ?", (id_page, id_sent))
+    rez = cur.fetchone()
+    if rez:
+
+        return rez[0]
+    else:
+        cur.execute(
+            "INSERT INTO sent_in_page (id_page, id_sent) VALUES (?, ?)", (id_page, id_sent))
+
+        return cur.lastrowid
+
+
+def add_word_in_sent(cur, id_sent, id_word):
+    cur.execute(
+        "SELECT rowid FROM words_in_sent WHERE id_sent = ? AND id_word = ?", (id_sent, id_word))
+    rez = cur.fetchone()
+    if rez:
+
+        return rez[0]
+    else:
+        cur.execute(
+            "INSERT INTO words_in_sent (id_sent, id_word) VALUES (?, ?)", (id_sent, id_word))
+
+        return cur.lastrowid
+
+
+def add_sentences(cur: sq.Cursor, id_page, sentences: list[str], page_words: dict):
+    for sent in sentences:
+        is_sent, id_sent = get_id_sentences(cur, sent['line'])
+        add_to_db_sent(cur, id_page, id_sent)
+        if not is_sent:
+            for word in sent['words']:
+                id_word = page_words[word]['id']
+                # words_in_sent
+                add_word_in_sent(cur, id_sent, id_word)
+
+
+def add_new_urls(url: str, soup: BeautifulSoup = None, list_urls: list[str] = None) -> None:
+    """add_new_urls добавляет новые ссылки в список
+
+    url - должен быть полный, используется для обработки относительных ссылок.
+          если page == None, то этот адрес используется для загрузки страницы
+
+    Args:
+        url (str): адрес страницы для поиска ссылок
+        page (BeautifulSoup): страница BeautifulSoup для поиска ссылок
+        list_urls (list[str]): список для добавления новых ссылок
+    """
+    page = soup if soup else get_page(url)
+    # ToDo: Необходимо проверить тег meta base, который может изменить путь для относительных ссылок
+    base_netloc = URL.urlsplit(url).netloc
+
+    list_url = list_urls if list_urls else []
+
+    for link in page.find_all('a'):
+        href = link.get('href')
+        new_url = URL.urldefrag(URL.urljoin(url, href, True)).url
+
+        if base_netloc == URL.urlsplit(new_url).netloc and parse_url(new_url)[5].lower() in ('html', 'htm') and not new_url in list_url:
+            list_url.append(new_url)
 
 
 if __name__ == '__main__':
-    url = 'https://docs.python.org/3.11/reference/index.html?d=45#24'
+    # list_url
+    list_url = ['https://docs.python.org/3.11/reference/index.html']
+    while list_url:
+        url = list_url.pop()
+        print(f'Обработка: {url}\n\tОсталось: {len(list_url)} ссылок')
+        (t_url, base, path, page_name, file_name, ext) = parse_url(url)
 
-    (t_url, base, path, page_name, file_name, ext) = parse_url(url)
+        text = get_page(url).text
+        soup = BeautifulSoup(text, 'lxml')
 
-    text = get_page(url).text
-    soup = BeautifulSoup(text, 'lxml')
+        sentences = get_sentences(soup)
 
-    sentences = soup.get_text().splitlines()
-    # print(l)
-    # print(len(l))
-    # exit()
-    l = soup.get_text().split()
+        words = soup.get_text().split()
 
-    # print(l)
-    # print(len(l))
+        page_words = get_words(words)
 
-    page_words = {}
-    for txt in l:
-        add_word(txt, page_words)
+        path_db = Path(__file__).parent/'words.db'
 
-    page_words = sort_words(page_words)
+        with sq.connect(path_db) as con:
+            cur = con.cursor()
+            init_db(cur)
 
-    # print(page_words)
-    # print(len(page_words))
-    # print(path, page_name, file_name, ext, sep="\n")
-
-    path_db = Path(__file__).parent/'words.db'
-    # print(path_db)
-    # print(__file__)
-    with sq.connect(path_db) as con:
-        cur = con.cursor()
-        init_db(cur)
-
-        id_page = add_page(cur, t_url)
-        add_word_in_db(cur, id_page, page_words)
-        add_sentences(cur, id_page, sentences)
+            id_page = add_page(cur, t_url)
+            add_word_in_db(cur, id_page, page_words)
+            add_sentences(cur, id_page, sentences, page_words)
