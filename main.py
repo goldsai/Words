@@ -5,6 +5,7 @@ from bs4 import BeautifulSoup
 import requests
 import sqlite3 as sq
 from pathlib import Path
+import re
 
 
 def get_page(url: str) -> requests.Response:
@@ -144,15 +145,21 @@ def _get_sets_words(line: str) -> set:
 
 
 def _normalization_sentences(line: str):
-    line = line.strip()
-
-    return {'line': line, 'words': _get_sets_words(line)} if line else None
+    line = line.replace('\n', ' ').expandtabs().strip()
+    # while line.find('  ') > -1:
+    #     line = line.replace('  ', ' ')
+    line = re.sub(" +", " ", line)
+    words = _get_sets_words(line)
+    return {'line': line, 'words': words} if line and words else None
 
 
 def get_sentences(soap: BeautifulSoup) -> list[dict]:
     l = []
-    for line in soup.get_text().splitlines():
-        if item := _normalization_sentences(line):
+    split_regex = re.compile(r'[.|!|?|…]')
+    # ' '.join(soup.get_text().splitlines()).split('.'):
+    for line in split_regex.split(soup.get_text()):
+        item = _normalization_sentences(line)
+        if item:
             l.append(item)
     return l
 
@@ -257,9 +264,10 @@ def add_sentences(cur: sq.Cursor, id_page, sentences: list[str], page_words: dic
         add_to_db_sent(cur, id_page, id_sent)
         if not is_sent:
             for word in sent['words']:
-                id_word = page_words[word]['id']
-                # words_in_sent
-                add_word_in_sent(cur, id_sent, id_word)
+                if word in page_words:
+                    id_word = page_words[word]['id']
+                    # words_in_sent
+                    add_word_in_sent(cur, id_sent, id_word)
 
 
 def add_new_urls(url: str, soup: BeautifulSoup = None, list_urls: list[str] = None) -> None:
@@ -312,7 +320,8 @@ if __name__ == '__main__':
             add_new_urls(url, soup, list_url)
 
             sentences = get_sentences(soup)
-
+            # for num, sent in enumerate(sentences):
+            #     print(f"{num}\t {sent['line']}")
             words = soup.get_text().split()
 
             page_words = get_words(words)
@@ -351,7 +360,8 @@ if __name__ == '__main__':
         if min_loop_time > _time_loop:
             min_loop_time = _time_loop
         print(
-            f'\t\tОбработал за:{_time_loop} ({min_loop_time}:{max_loop_time})\n')
+            f'\t\tОбработал за:{_time_loop} ({min_loop_time}...{max_loop_time})\n')
+        # count_url = len(list_url)
     print(
         f'\nОбщее время: {datetime.now()-global_time} \n\tВсего обработал: {count_url} ссылок')
 
