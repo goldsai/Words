@@ -1,3 +1,4 @@
+from datetime import datetime
 import string
 import urllib.parse as URL
 from bs4 import BeautifulSoup
@@ -286,26 +287,66 @@ def add_new_urls(url: str, soup: BeautifulSoup = None, list_urls: list[str] = No
 if __name__ == '__main__':
     # list_url
     list_url = ['https://docs.python.org/3.11/reference/index.html']
-    while list_url:
-        url = list_url.pop()
-        print(f'Обработка: {url}\n\tОсталось: {len(list_url)} ссылок')
-        (t_url, base, path, page_name, file_name, ext) = parse_url(url)
+    global_time = datetime.now()
+    count_url = 0
+    error_url = []
+    max_loop_time = None
+    min_loop_time = None
+    while count_url < len(list_url):
+        time_loop = datetime.now()
+        url = list_url[count_url]
+        print(
+            f'Обработка:\t{url}\n\t\tОбработал: {count_url} ссылок. \n\t\tОсталось: {len(list_url)-count_url} ссылок')
+        count_url += 1
+        try:
+            (t_url, base, path, page_name, file_name, ext) = parse_url(url)
 
-        text = get_page(url).text
-        soup = BeautifulSoup(text, 'lxml')
+            text = get_page(url).text
+            soup = BeautifulSoup(text, 'lxml')
 
-        sentences = get_sentences(soup)
+            add_new_urls(url, soup, list_url)
 
-        words = soup.get_text().split()
+            sentences = get_sentences(soup)
 
-        page_words = get_words(words)
+            words = soup.get_text().split()
 
-        path_db = Path(__file__).parent/'words.db'
+            page_words = get_words(words)
 
-        with sq.connect(path_db) as con:
-            cur = con.cursor()
-            init_db(cur)
+            path_db = Path(__file__).parent/'words.db'
 
-            id_page = add_page(cur, t_url)
-            add_word_in_db(cur, id_page, page_words)
-            add_sentences(cur, id_page, sentences, page_words)
+        except Exception as e:
+
+            print('-'*50)
+            print(f'При обработке ссылки "{url}" произошло исключение {e}')
+            print('-'*50)
+            error_url.append(url)
+        else:
+            time_db = datetime.now()
+            with sq.connect(path_db) as con:
+                cur = con.cursor()
+                init_db(cur)
+
+                id_page = add_page(cur, t_url)
+                add_word_in_db(cur, id_page, page_words)
+                add_sentences(cur, id_page, sentences, page_words)
+            print(
+                f'\t\tРабота с БД за:{datetime.now()-time_db}')
+            print(
+                f'\t\tОбработал {len(page_words)} слов; {len(sentences)} предложения')
+            # print(f'\t\tОбработал {len(page_words)} слов')
+        _time_loop = datetime.now()-time_loop
+        if not min_loop_time:
+            min_loop_time = _time_loop
+            max_loop_time = _time_loop
+        if max_loop_time < _time_loop:
+            max_loop_time = _time_loop
+        if min_loop_time > _time_loop:
+            min_loop_time = _time_loop
+        print(
+            f'\t\tОбработал за:{_time_loop} из них обрабатывал страницу за {time_db-time_loop} ({min_loop_time}:{max_loop_time})\n')
+    print(
+        f'\nОбщее время: {datetime.now()-global_time} \n\tВсего обработал: {count_url} ссылок')
+
+    print(f'Необработанно {len(error_url)} ссылок:')
+    for num, url in enumerate(error_url):
+        print(f'{num}\t - url')
