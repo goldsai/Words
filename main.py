@@ -145,10 +145,12 @@ def _get_sets_words(line: str) -> set:
 
 
 def _normalization_sentences(line: str):
+    print(f'\t{line!r}')
     line = line.replace('\n', ' ').expandtabs().strip()
     # while line.find('  ') > -1:
     #     line = line.replace('  ', ' ')
     line = re.sub(" +", " ", line)
+    print(f'\t\t{line!r}')
     words = _get_sets_words(line)
     return {'line': line, 'words': words} if line and words else None
 
@@ -164,51 +166,40 @@ def get_sentences(soap: BeautifulSoup) -> list[dict]:
     return l
 
 
-# def parser_sql_url(url) -> str:
-#     check_list = [
-#         ';',
-#         'SELECT',
-#         ''
-#     ]
+def _add_if_missing(cur: sq.Cursor, table_name: str, field: list[dict]) -> tuple[bool, int]:
 
-def _add_if_missing(cur: sq.Cursor, table_name: str, field: dict, is_not_text: bool = True) -> tuple[bool, int]:
-
-    assert 'n' in field, f'Атрибут {field=} должен иметь ключь "n" - имя поля'
-    assert 'v' in field, f'Атрибут {field=} должен иметь ключь "v" - значение поля'
-    cur.execute(f'SELECT rowid FROM "{table_name}" WHERE "{field["n"]}" {"=" if is_not_text else "LIKE"} ?',
-                (field['v'], ))
+    # assert 'n' in field, f'Атрибут {field=} должен иметь ключь "n" - имя поля'
+    # assert 'v' in field, f'Атрибут {field=} должен иметь ключь "v" - значение поля'
+    values = tuple((item['v'] for item in field))
+    wheres = [
+        f'''"{item['n']}" {'=' if item['t'] else 'LIKE'} ?''' for item in field
+    ]
+    exe = f'''
+        SELECT rowid FROM "{table_name}"
+        WHERE {' AND '.join( wheres )}
+           '''
+    cur.execute(exe, values)
     rez = cur.fetchone()
     if rez:
         return True, rez[0]
     else:
-        cur.execute(f'INSERT INTO "{table_name}" ("{field["n"]}") VALUES (?)',
-                    (field['v'],))
+        cur.execute(f'''
+                    INSERT INTO "{table_name}"
+                    ({", ".join([f'"{item["n"]}"' for item in field])})
+                    VALUES ({", ".join('?'*len(field))})
+                    ''',
+                    values)
         return False, cur.lastrowid
 
 
 def add_page(cur: sq.Cursor, url: str):
-    # # cur.execute("SELECT id_page FROM pages WHERE url LIKE '?'", (url,))
-    # cur.execute("SELECT id_page FROM pages WHERE url LIKE ?", (url,))
-    # rez = cur.fetchone()
-    # if rez:
 
-    #     return True, rez[0]
-    # else:
-    #     cur.execute("INSERT INTO pages (url) VALUES (?)", (url,))
-
-    #     return False, cur.lastrowid
-    return _add_if_missing(cur, 'pages', {'n': 'url', 'v': url}, False)
+    return _add_if_missing(cur, 'pages', [{'n': 'url', 'v': url, 't': False}])
 
 
 def get_id_word(cur: sq.Cursor, word: str):
-    # cur.execute("SELECT id_word FROM words WHERE word LIKE ?", (word,))
-    # rez = cur.fetchone()
-    # if rez:
-    #     return rez[0]
-    # else:
-    #     cur.execute("INSERT INTO words (word) VALUES (?)", (word,))
-    #     return cur.lastrowid
-    return _add_if_missing(cur, 'words', {'n': 'word', 'v': word}, False)[1]
+
+    return _add_if_missing(cur, 'words', [{'n': 'word', 'v': word, 't': False}])[1]
 
 
 def add_word_in_db(cur: sq.Cursor, id_page, page_words: dict):
@@ -232,38 +223,21 @@ def add_word_in_db(cur: sq.Cursor, id_page, page_words: dict):
 
 def get_id_sentences(cur: sq.Cursor, sent: str):
 
-    # cur.execute("SELECT id_sent FROM sentences WHERE sent LIKE ?", (sent,))
-    # rez = cur.fetchone()
-    # if rez:
-    #     return True, rez[0]
-    # else:
-    #     cur.execute("INSERT INTO sentences (sent) VALUES (?)", (sent,))
-    #     return False, cur.lastrowid
-    return _add_if_missing(cur, 'sentences', {'n': 'sent', 'v': sent}, False)
+    return _add_if_missing(cur, 'sentences', [{'n': 'sent', 'v': sent, 't': False}])
 
 
 def add_to_db_sent(cur: sq.Cursor, id_page, id_sent):
-    cur.execute(
-        "SELECT rowid FROM sent_in_page WHERE id_page = ? AND id_sent = ?", (id_page, id_sent))
-    rez = cur.fetchone()
-    if rez:
-        return rez[0]
-    else:
-        cur.execute(
-            "INSERT INTO sent_in_page (id_page, id_sent) VALUES (?, ?)", (id_page, id_sent))
-        return cur.lastrowid
+
+    return _add_if_missing(cur, 'sent_in_page', [
+        {'n': 'id_page', 'v': id_page, 't': True},
+        {'n': 'id_sent', 'v': id_sent, 't': True}])[1]
 
 
 def add_word_in_sent(cur, id_sent, id_word):
-    cur.execute(
-        "SELECT rowid FROM words_in_sent WHERE id_sent = ? AND id_word = ?", (id_sent, id_word))
-    rez = cur.fetchone()
-    if rez:
-        return rez[0]
-    else:
-        cur.execute(
-            "INSERT INTO words_in_sent (id_sent, id_word) VALUES (?, ?)", (id_sent, id_word))
-        return cur.lastrowid
+
+    return _add_if_missing(cur, 'words_in_sent', [
+        {'n': 'id_sent', 'v': id_sent, 't': True},
+        {'n': 'id_word', 'v': id_word, 't': True}])[1]
 
 
 def add_sentences(cur: sq.Cursor, id_page, sentences: list[str], page_words: dict):
@@ -282,7 +256,7 @@ def add_new_urls(url: str, soup: BeautifulSoup = None, list_urls: list[str] = No
     """add_new_urls добавляет новые ссылки в список
 
     url - должен быть полный, используется для обработки относительных ссылок.
-          если page == None, то этот адрес используется для загрузки страницы
+          если soup == None, то этот адрес используется для загрузки страницы
 
     Args:
         url (str): адрес страницы для поиска ссылок
@@ -325,11 +299,10 @@ if __name__ == '__main__':
             text = get_page(url).text
             soup = BeautifulSoup(text, 'lxml')
 
-            add_new_urls(url, soup, list_url)
+            # add_new_urls(url, soup, list_url)
 
             sentences = get_sentences(soup)
-            # for num, sent in enumerate(sentences):
-            #     print(f"{num}\t {sent['line']}")
+
             words = soup.get_text().split()
 
             page_words = get_words(words)
